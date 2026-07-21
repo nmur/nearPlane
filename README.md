@@ -28,7 +28,7 @@ It's listing on m5burner now! 🎉 Search as "nearPlane" and burn directly your 
 ### Prerequisites
 
 *   Buy a M5StickC Plus 2 (ask your wife before order one)
-*   Ensure [Arduino IDE](https://www.arduino.cc/en/software) installed
+*   Install [Visual Studio Code](https://code.visualstudio.com/) with the [PlatformIO IDE extension](https://platformio.org/install/ide?install=vscode), or install [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html)
 *   A USB-C cable for programming and charging
 
 ### Installation Guide
@@ -42,39 +42,31 @@ The M5StickC Plus 2 uses a CH9102 chip for USB communication. You will need to i
 *   **Windows**: [Download and install the CH9102 driver](https://docs.m5stack.com/en/core/M5StickC%20PLUS2).
 *   **MacOS**: MacOS should detect the device automatically. If not, the driver can be found on the same M5Stack documentation page.
 
-#### 2. Configure Arduino IDE for M5Stack
+#### 2. Build and Upload with PlatformIO
 
-1.  Open the Arduino IDE.
-2.  Go to **File > Preferences** (or **Arduino IDE > Settings...** on MacOS).
-3.  In the "Additional boards manager URLs" field, paste the following URL:
+PlatformIO installs the ESP32 toolchain and the pinned `M5Unified` and `ArduinoJson` dependencies automatically.
+
+1.  Clone this repository and open its root directory in Visual Studio Code.
+2.  Connect the M5StickC Plus 2 with a USB-C cable.
+3.  Use the PlatformIO **Upload** task, or run these commands from the repository root:
+    ```sh
+    pio run
+    pio run --target upload
     ```
-    https://m5stack.oss-cn-shenzhen.aliyuncs.com/resource/arduino/package_m5stack_index.json
-    ```
-4.  Click **OK**.
 
-#### 3. Install M5StickC Plus 2 Board Support
+PlatformIO normally detects the serial port automatically. If more than one compatible device is attached, pass it explicitly:
 
-1.  Go to **Tools > Board > Boards Manager...**.
-2.  Search for `M5Stack`.
-3.  Install the "M5Stack Boards" package by M5Stack.
+```sh
+pio run --target upload --upload-port /dev/cu.wchusbserial...
+```
 
-#### 4. Install Required Libraries
+To view firmware logs, use the PlatformIO **Monitor** task or run:
 
-This project requires two main libraries.
+```sh
+pio device monitor
+```
 
-1.  Go to **Tools > Manage Libraries...** (or Sketch > Include Library > Manage Libraries...).
-2.  Search for and install the following libraries:
-    *   `M5Unified` (Install the latest version).
-    *   `ArduinoJson` by Benoit Blanchon (Install the latest version).
-
-#### 5. Load and Burn the Firmware
-
-1.  Clone this repository or download the source code.
-2.  Open the main `.ino` file in the Arduino IDE.
-3.  Connect your M5StickC Plus 2 to your computer with the USB-C cable.
-4.  Go to **Tools > Board** and from the "M5Stack Arduino" section, select **"M5StickCPlus2"**.
-5.  Go to **Tools > Port** and select the serial port corresponding to your device (e.g., `COM3` on Windows, `/dev/cu.wchusbserial...` on MacOS).
-6.  Click the **Upload** button (the arrow icon) to compile and flash the firmware to the device.
+The PlatformIO environment uses the `m5stick-c` board definition with the M5StickC Plus2 PSRAM flags recommended by M5Stack, because PlatformIO does not currently provide a separate Plus2 board ID. It overrides the legacy board definition with the Plus2's 8 MB flash layout.
 
 ### Device Configuration
 

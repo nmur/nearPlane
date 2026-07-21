@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <M5Unified.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -5,6 +6,8 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include <cmath>
+#include <cstdio>
 #include <time.h>
 
 Preferences preferences;
@@ -135,7 +138,7 @@ void drawBatteryStatus() {
     if (fill_width > 0) {
         canvas.fillRect(6, 6, fill_width, 8, batt_color);
     }
-    
+
     if (is_charging) {
         canvas.drawLine(14, 7, 11, 10, TFT_YELLOW);
         canvas.drawLine(11, 10, 14, 13, TFT_YELLOW);
@@ -154,7 +157,7 @@ void drawClock() {
         canvas.drawString("--:--", 235, 5);
         return;
     }
-    
+
     sprintf(timeBuffer, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
     canvas.drawString(timeBuffer, 235, 5);
 }
@@ -309,8 +312,8 @@ void displayCurrentPage() {
   canvas.fillScreen(BLACK);
   drawBatteryStatus();
   drawClock();
-  
-  if (doc.isNull() || !doc.containsKey("ac") || doc["ac"].as<JsonArray>().size() == 0) {
+
+  if (doc.isNull() || !doc["ac"].is<JsonArray>() || doc["ac"].as<JsonArray>().size() == 0) {
     canvas.setTextColor(TFT_WHITE);
     canvas.setFont(&fonts::FreeSansBold12pt7b);
     canvas.setTextDatum(MC_DATUM);
@@ -481,7 +484,7 @@ void fetchFlightDetails(String flightCode) {
     DeserializationError error = deserializeJson(responseDoc, http.getStream());
     if (!error && responseDoc.is<JsonArray>() && responseDoc.as<JsonArray>().size() > 0) {
       JsonObject flightInfo = responseDoc[0];
-      if (flightInfo.containsKey("_airport_codes_iata")) {
+      if (flightInfo["_airport_codes_iata"].is<const char*>()) {
         String routeStr = flightInfo["_airport_codes_iata"].as<String>();
         int separator = routeStr.indexOf('-');
         if (separator > 0) {
@@ -516,7 +519,7 @@ void fetchAircraftData() {
       canvas.drawString("JSON PARSE ERROR", 120, 67);
       canvas.pushSprite(0, 0);
       pollInterval = ERROR_POLL_INTERVAL;
-    } else if (doc.containsKey("ac") && doc["ac"].as<JsonArray>().size() > 0) {
+    } else if (doc["ac"].is<JsonArray>() && doc["ac"].as<JsonArray>().size() > 0) {
       lastActivityTime = millis();
       String currentAircraftReg = doc["ac"][0]["r"] | "N/A";
       if (currentAircraftReg != "N/A" && currentAircraftReg != lastSeenAircraftReg) {
