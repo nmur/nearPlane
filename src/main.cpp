@@ -10,16 +10,26 @@
 #include <cstdio>
 #include <time.h>
 
+#include "airline_logos.h"
+#include "flight_details.h"
+
 Preferences preferences;
 WebServer server(80);
 DNSServer dnsServer;
 M5Canvas canvas(&M5.Display);
 
+#if defined(ARDUINO_M5STACK_Core2)
+const int NUM_PAGES = 7;
+const int LEGACY_PAGE_OFFSET = 1;
+#else
 const int NUM_PAGES = 6;
+const int LEGACY_PAGE_OFFSET = 0;
+#endif
 unsigned long pollInterval = 2000;
 const unsigned long SHORT_POLL_INTERVAL = 2000;
 const unsigned long NO_AIRCRAFT_POLL_INTERVAL = 10000;
 const unsigned long ERROR_POLL_INTERVAL = 60000;
+const unsigned long FLIGHT_DETAILS_RETRY_INTERVAL_MS = 30000;
 const long RESET_HOLD_TIME_MS = 5000;
 
 bool configMode = false;
@@ -29,9 +39,10 @@ unsigned long lastPollTime = 0;
 int currentPage = 0;
 JsonDocument doc;
 String lastSeenAircraftReg = "";
-String departureAirport = "N/A";
-String arrivalAirport = "N/A";
 String lastFlightCodeForDetails = "";
+FlightDetails flightDetails;
+bool flightDetailsLookupComplete = false;
+unsigned long lastFlightDetailsAttemptTime = 0;
 
 unsigned long btnB_press_start_time = 0;
 bool isResetting = false;
@@ -63,6 +74,10 @@ void drawDegreeSymbol(int x, int y);
 void drawBatteryStatus();
 void goToSleep();
 void drawClock();
+void resetFlightDetailsState();
+#if defined(ARDUINO_M5STACK_Core2)
+void drawFlightOverview(JsonObjectConst aircraft);
+#endif
 
 void setup() {
   auto cfg = M5.config();
@@ -107,9 +122,9 @@ void goToSleep() {
   canvas.setTextColor(TFT_WHITE);
   canvas.setTextDatum(MC_DATUM);
   canvas.setFont(&fonts::FreeSansBold12pt7b);
-  canvas.drawString("No Activity", 120, 50);
+  canvas.drawString("No Activity", canvas.width() / 2, canvas.height() / 2 - 18);
   canvas.setFont(&fonts::FreeSans9pt7b);
-  canvas.drawString("Going to sleep...", 120, 80);
+  canvas.drawString("Going to sleep...", canvas.width() / 2, canvas.height() / 2 + 12);
   canvas.pushSprite(0, 0);
   delay(3000);
   M5.Display.sleep();
@@ -154,13 +169,206 @@ void drawClock() {
     canvas.setTextDatum(TR_DATUM);
 
     if(!getLocalTime(&timeinfo)){
-        canvas.drawString("--:--", 235, 5);
+        canvas.drawString("--:--", canvas.width() - 5, 5);
         return;
     }
 
     sprintf(timeBuffer, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
-    canvas.drawString(timeBuffer, 235, 5);
+    canvas.drawString(timeBuffer, canvas.width() - 5, 5);
 }
+
+#if defined(ARDUINO_M5STACK_Core2)
+namespace {
+
+struct AircraftTypeIdentity {
+  const char *code;
+  const char *name;
+};
+
+const AircraftTypeIdentity aircraftTypeIdentities[] = {
+    {"A319", "Airbus A319"},       {"A320", "Airbus A320"},
+    {"A321", "Airbus A321"},       {"A20N", "Airbus A320neo"},
+    {"A21N", "Airbus A321neo"},    {"A332", "Airbus A330-200"},
+    {"A333", "Airbus A330-300"},   {"A339", "Airbus A330-900"},
+    {"A359", "Airbus A350-900"},   {"A35K", "Airbus A350-1000"},
+    {"A388", "Airbus A380-800"},   {"B712", "Boeing 717-200"},
+    {"B737", "Boeing 737-700"},    {"B738", "Boeing 737-800"},
+    {"B739", "Boeing 737-900"},    {"B38M", "Boeing 737 MAX 8"},
+    {"B39M", "Boeing 737 MAX 9"},  {"B744", "Boeing 747-400"},
+    {"B748", "Boeing 747-8"},      {"B752", "Boeing 757-200"},
+    {"B763", "Boeing 767-300"},    {"B772", "Boeing 777-200"},
+    {"B77W", "Boeing 777-300ER"},  {"B788", "Boeing 787-8"},
+    {"B789", "Boeing 787-9"},      {"B78X", "Boeing 787-10"},
+    {"E170", "Embraer E170"},      {"E190", "Embraer E190"},
+    {"E195", "Embraer E195"},      {"E290", "Embraer E190-E2"},
+    {"E295", "Embraer E195-E2"},   {"AT72", "ATR 72"},
+    {"AT76", "ATR 72-600"},        {"DH8D", "Dash 8 Q400"},
+    {"F100", "Fokker 100"},        {"SF34", "Saab 340"},
+};
+
+String ellipsizeToWidth(String text, int maxWidth) {
+  text.trim();
+  if (canvas.textWidth(text) <= maxWidth) {
+    return text;
+  }
+  while (text.length() > 1 && canvas.textWidth(text + "...") > maxWidth) {
+    text.remove(text.length() - 1);
+  }
+  return text + "...";
+}
+
+String airportCodeOrPlaceholder(const AirportDetails &airport) {
+  return airport.code.isEmpty() ? "---" : airport.code;
+}
+
+String airportCity(const AirportDetails &airport) {
+  if (!airport.city.isEmpty()) {
+    return airport.city;
+  }
+  if (!airport.name.isEmpty()) {
+    return airport.name;
+  }
+  return "City unavailable";
+}
+
+String aircraftTypeLabel(String code) {
+  code.trim();
+  code.toUpperCase();
+  if (code.isEmpty() || code == "N/A") {
+    return "Aircraft type unavailable";
+  }
+  for (const AircraftTypeIdentity &identity : aircraftTypeIdentities) {
+    if (code == identity.code) {
+      return code + " - " + identity.name;
+    }
+  }
+  return code;
+}
+
+const AirlineIdentity *currentAirlineIdentity(const String &callsign) {
+  const AirlineIdentity *identity = findAirlineByCode(flightDetails.airlineIcao);
+  return identity != nullptr ? identity : inferAirlineFromCallsign(callsign);
+}
+
+String displayFlightNumber(const String &callsign, const AirlineIdentity *identity) {
+  if (!flightDetails.number.isEmpty()) {
+    String prefix = identity != nullptr ? String(identity->iata) : flightDetails.airlineIcao;
+    if (!prefix.isEmpty()) {
+      return prefix + flightDetails.number;
+    }
+  }
+  return callsign.isEmpty() || callsign == "N/A" ? "Flight unknown" : callsign;
+}
+
+void drawFallbackLogo(const String &code) {
+  canvas.fillRoundRect(12, 32, 114, 95, 8, TFT_WHITE);
+  canvas.fillTriangle(25, 85, 111, 62, 72, 87, TFT_DARKGREY);
+  canvas.fillTriangle(50, 77, 65, 48, 76, 74, TFT_DARKGREY);
+  canvas.setTextColor(TFT_BLACK);
+  canvas.setTextDatum(BC_DATUM);
+  canvas.setFont(&fonts::FreeSansBold12pt7b);
+  canvas.drawString(code.isEmpty() ? "?" : code, 69, 124);
+}
+
+}  // namespace
+
+void drawFlightOverview(JsonObjectConst aircraft) {
+  canvas.fillScreen(BLACK);
+
+  String callsign = aircraft["flight"] | "N/A";
+  callsign.trim();
+  String registration = aircraft["r"] | "N/A";
+  String type = aircraft["t"] | "N/A";
+  String squawk = aircraft["squawk"] | "----";
+  String emergency = aircraft["emergency"] | "none";
+  bool isEmergency = emergency != "none" || squawk == "7700" || squawk == "7600" ||
+                     squawk == "7500";
+
+  if (isEmergency) {
+    canvas.fillRect(0, 0, canvas.width(), 21, TFT_RED);
+    canvas.drawRect(0, 0, canvas.width(), canvas.height(), TFT_RED);
+    canvas.drawRect(1, 1, canvas.width() - 2, canvas.height() - 2, TFT_RED);
+  }
+
+  drawBatteryStatus();
+  drawClock();
+  canvas.setFont(&fonts::Font0);
+  canvas.setTextColor(isEmergency ? TFT_WHITE : TFT_DARKGREY);
+  canvas.setTextDatum(TC_DATUM);
+  canvas.drawString(isEmergency ? "EMERGENCY" : "nearPlane", canvas.width() / 2, 5);
+  canvas.drawLine(5, 21, canvas.width() - 5, 21, isEmergency ? TFT_RED : TFT_DARKGREY);
+
+  const AirlineIdentity *identity = currentAirlineIdentity(callsign);
+  String airlineCode = identity != nullptr ? String(identity->iata) : flightDetails.airlineIcao;
+  if (airlineCode.isEmpty() && callsign.length() >= 3) {
+    airlineCode = callsign.substring(0, 3);
+  }
+  String airlineName = identity != nullptr ? String(identity->name) : "Airline unavailable";
+  const AirlineLogo *logo = identity != nullptr ? findAirlineLogo(identity->iata) : nullptr;
+
+  canvas.drawRoundRect(8, 28, 122, 103, 9, TFT_DARKGREY);
+  bool logoDrawn = false;
+  if (logo != nullptr) {
+    canvas.fillRoundRect(12, 32, 114, 95, 8, TFT_WHITE);
+    logoDrawn = canvas.drawPng(logo->png, logo->length, 24, 34, 96, 90, 0, 0, 0.70f);
+  }
+  if (!logoDrawn) {
+    drawFallbackLogo(airlineCode);
+  }
+
+  canvas.setTextDatum(TC_DATUM);
+  canvas.setTextColor(TFT_LIGHTGREY);
+  canvas.setFont(&fonts::FreeSans9pt7b);
+  canvas.drawString(ellipsizeToWidth(airlineName, 174), 226, 27);
+
+  canvas.setTextColor(isEmergency ? TFT_RED : TFT_YELLOW);
+  canvas.setFont(&fonts::Orbitron_Light_32);
+  String flightNumber = displayFlightNumber(callsign, identity);
+  if (canvas.textWidth(flightNumber) > 174) {
+    canvas.setFont(&fonts::FreeSansBold18pt7b);
+  }
+  canvas.drawString(ellipsizeToWidth(flightNumber, 174), 226, 48);
+
+  canvas.setTextColor(TFT_WHITE);
+  canvas.setFont(&fonts::FreeSansBold9pt7b);
+  canvas.drawString(ellipsizeToWidth(aircraftTypeLabel(type), 174), 226, 93);
+  canvas.setFont(&fonts::Font0);
+  canvas.setTextColor(TFT_DARKGREY);
+  canvas.drawString("REG " + registration, 226, 119);
+
+  canvas.drawLine(8, 138, 312, 138, TFT_DARKGREY);
+  canvas.setFont(&fonts::Font0);
+  canvas.setTextColor(TFT_DARKGREY);
+  canvas.drawString("ORIGIN", 72, 144);
+  canvas.drawString("DESTINATION", 248, 144);
+
+  canvas.setFont(&fonts::FreeSansBold24pt7b);
+  canvas.setTextColor(TFT_WHITE);
+  canvas.drawString(airportCodeOrPlaceholder(flightDetails.origin), 72, 153);
+  canvas.drawString(airportCodeOrPlaceholder(flightDetails.destination), 248, 153);
+
+  canvas.drawLine(137, 177, 181, 177, TFT_YELLOW);
+  canvas.fillTriangle(181, 172, 181, 182, 190, 177, TFT_YELLOW);
+
+  canvas.setFont(&fonts::FreeSans9pt7b);
+  canvas.setTextColor(TFT_LIGHTGREY);
+  if (flightDetails.routeFound) {
+    canvas.drawString(ellipsizeToWidth(airportCity(flightDetails.origin), 136), 72, 202);
+    canvas.drawString(ellipsizeToWidth(airportCity(flightDetails.destination), 136), 248, 202);
+  } else {
+    canvas.setTextDatum(TC_DATUM);
+    canvas.drawString(flightDetailsLookupComplete ? "Route unavailable" : "Looking up route...",
+                      canvas.width() / 2, 202);
+  }
+
+  canvas.setFont(&fonts::Font0);
+  canvas.setTextColor(TFT_DARKGREY);
+  canvas.setTextDatum(BL_DATUM);
+  canvas.drawString("BtnA: details", 6, canvas.height() - 2);
+  canvas.setTextDatum(BR_DATUM);
+  canvas.drawString("1/" + String(NUM_PAGES), canvas.width() - 5, canvas.height() - 2);
+}
+#endif
 
 void drawDegreeSymbol(int x, int y) {
   canvas.drawCircle(x, y, 2, TFT_WHITE);
@@ -190,7 +398,7 @@ void handleButtons() {
       canvas.setTextColor(TFT_WHITE);
       canvas.setFont(&fonts::FreeSansBold12pt7b);
       canvas.setTextDatum(MC_DATUM);
-      canvas.drawString("Settings Reset!", 120, 67);
+      canvas.drawString("Settings Reset!", canvas.width() / 2, canvas.height() / 2);
       canvas.pushSprite(0, 0);
       preferences.clear();
       delay(2500);
@@ -207,9 +415,10 @@ void drawResetScreen(int seconds_left) {
   canvas.setTextColor(TFT_WHITE);
   canvas.setTextDatum(MC_DATUM);
   canvas.setFont(&fonts::FreeSans9pt7b);
-  canvas.drawString("Release to cancel", 120, 40);
+  canvas.drawString("Release to cancel", canvas.width() / 2, canvas.height() / 2 - 28);
   canvas.setFont(&fonts::Font4);
-  canvas.drawString("Reset in " + String(seconds_left), 120, 90);
+  canvas.drawString("Reset in " + String(seconds_left), canvas.width() / 2,
+                    canvas.height() / 2 + 22);
   canvas.pushSprite(0, 0);
 }
 
@@ -317,13 +526,21 @@ void displayCurrentPage() {
     canvas.setTextColor(TFT_WHITE);
     canvas.setFont(&fonts::FreeSansBold12pt7b);
     canvas.setTextDatum(MC_DATUM);
-    canvas.drawString("No aircraft nearby.", 120, 60);
+    canvas.drawString("No aircraft nearby.", canvas.width() / 2, canvas.height() / 2 - 8);
     canvas.setFont(&fonts::FreeSans9pt7b);
-    canvas.drawString("Checking again soon...", 120, 90);
+    canvas.drawString("Checking again soon...", canvas.width() / 2, canvas.height() / 2 + 22);
     canvas.pushSprite(0, 0);
     return;
   }
   JsonObject aircraft = doc["ac"][0];
+#if defined(ARDUINO_M5STACK_Core2)
+  if (currentPage == 0) {
+    drawFlightOverview(aircraft);
+    canvas.pushSprite(0, 0);
+    return;
+  }
+#endif
+  int telemetryPage = currentPage - LEGACY_PAGE_OFFSET;
   String flight = aircraft["flight"] | "N/A";
   flight.trim();
   String reg = aircraft["r"] | "N/A";
@@ -344,7 +561,7 @@ void displayCurrentPage() {
   canvas.setTextDatum(TC_DATUM);
   canvas.drawString(reg + " (" + type + ")", 120, 45);
   canvas.drawLine(10, 65, 230, 65, TFT_DARKGREY);
-  switch (currentPage) {
+  switch (telemetryPage) {
   case 0: {
     canvas.setFont(&fonts::FreeSans9pt7b);
     canvas.setTextDatum(TL_DATUM);
@@ -355,7 +572,10 @@ void displayCurrentPage() {
     canvas.setTextDatum(TR_DATUM);
     canvas.drawString(String(aircraft["alt_baro"] | 0) + " ft", 225, 75);
     canvas.drawString(String(aircraft["gs"].as<float>(), 0) + " kt", 225, 95);
-    String route = departureAirport + " > " + arrivalAirport;
+    String origin = flightDetails.origin.code.isEmpty() ? "N/A" : flightDetails.origin.code;
+    String destination =
+        flightDetails.destination.code.isEmpty() ? "N/A" : flightDetails.destination.code;
+    String route = origin + " > " + destination;
     canvas.drawString(route, 225, 115);
     break;
   }
@@ -462,40 +682,56 @@ void displayCurrentPage() {
 }
 
 void fetchFlightDetails(String flightCode) {
-  if (flightCode == "N/A" || flightCode.isEmpty() || flightCode == lastFlightCodeForDetails) {
+  if (flightCode == "N/A" || flightCode.isEmpty()) {
+    resetFlightDetailsState();
     return;
   }
-  departureAirport = "-";
-  arrivalAirport = "-";
+
+  if (flightCode != lastFlightCodeForDetails) {
+    clearFlightDetails(flightDetails, flightCode);
+    lastFlightCodeForDetails = flightCode;
+    flightDetailsLookupComplete = false;
+    lastFlightDetailsAttemptTime = 0;
+  }
+  if (flightDetailsLookupComplete) {
+    return;
+  }
+  unsigned long now = millis();
+  if (lastFlightDetailsAttemptTime != 0 &&
+      now - lastFlightDetailsAttemptTime < FLIGHT_DETAILS_RETRY_INTERVAL_MS) {
+    return;
+  }
+  lastFlightDetailsAttemptTime = now;
+
   JsonDocument requestDoc;
   JsonArray planes = requestDoc["planes"].to<JsonArray>();
   JsonObject plane = planes.add<JsonObject>();
   plane["callsign"] = flightCode;
-  plane["lat"] = 0;
-  plane["lng"] = 0;
+  plane["lat"] = latitude.toFloat();
+  plane["lng"] = longitude.toFloat();
   String requestBody;
   serializeJson(requestDoc, requestBody);
   HTTPClient http;
   http.begin("https://api.adsb.lol/api/0/routeset");
+  http.setTimeout(5000);
   http.addHeader("Content-Type", "application/json");
   int httpCode = http.POST(requestBody);
-  if (httpCode == HTTP_CODE_OK) {
+  if (httpCode >= 200 && httpCode < 300) {
     JsonDocument responseDoc;
     DeserializationError error = deserializeJson(responseDoc, http.getStream());
-    if (!error && responseDoc.is<JsonArray>() && responseDoc.as<JsonArray>().size() > 0) {
-      JsonObject flightInfo = responseDoc[0];
-      if (flightInfo["_airport_codes_iata"].is<const char*>()) {
-        String routeStr = flightInfo["_airport_codes_iata"].as<String>();
-        int separator = routeStr.indexOf('-');
-        if (separator > 0) {
-          departureAirport = routeStr.substring(0, separator);
-          arrivalAirport = routeStr.substring(separator + 1);
-        }
-      }
+    if (!error && parseFlightDetailsResponse(responseDoc.as<JsonVariantConst>(), flightCode,
+                                             flightDetails)) {
+      flightDetailsLookupComplete = true;
     }
   }
-  lastFlightCodeForDetails = flightCode;
   http.end();
+}
+
+void resetFlightDetailsState() {
+  lastFlightCodeForDetails = "";
+  lastFlightDetailsAttemptTime = 0;
+  flightDetailsLookupComplete = false;
+  clearFlightDetails(flightDetails);
 }
 
 void fetchAircraftData() {
@@ -533,9 +769,7 @@ void fetchAircraftData() {
       pollInterval = SHORT_POLL_INTERVAL;
     } else {
       lastSeenAircraftReg = "";
-      lastFlightCodeForDetails = "";
-      departureAirport = "N/A";
-      arrivalAirport = "N/A";
+      resetFlightDetailsState();
       doc.clear();
       displayCurrentPage();
       pollInterval = NO_AIRCRAFT_POLL_INTERVAL;
@@ -543,9 +777,7 @@ void fetchAircraftData() {
   } else {
     doc.clear();
     lastSeenAircraftReg = "";
-    lastFlightCodeForDetails = "";
-    departureAirport = "N/A";
-    arrivalAirport = "N/A";
+    resetFlightDetailsState();
     canvas.fillScreen(TFT_MAROON);
     drawBatteryStatus();
     drawClock();

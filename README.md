@@ -12,8 +12,10 @@ The tracker fetches data from **adsb.lol**, a free, open-source community-driven
 ## Features
 
 *   **Real-Time Tracking**: Displays the closest aircraft's flight data, updated every few seconds.
-*   **Reliable Flight Route Information**: Displays the departure and arrival airports (IATA codes) for most commercial flights by querying the adsb.lol API directly.
-*   **Multi-Page Interface**: Cycle through 6 different pages of detailed telemetry, including altitude, speed, heading, squawk code, and more.
+*   **Core2 Flight Overview**: Displays a large airline logo, passenger-facing flight number, aircraft type, and origin/destination airport codes and cities.
+*   **Reliable Flight Route Information**: Displays route and airport location data for most commercial flights by querying the adsb.lol API directly.
+*   **Offline Airline Branding**: Includes logos for 55 major passenger and cargo airlines, with a code-based fallback for unknown operators.
+*   **Multi-Page Interface**: The Core2 overview is followed by 6 pages of detailed telemetry, including altitude, speed, heading, squawk code, and more.
 *   **Emergency Alerts**: The display highlights aircraft with emergency squawk codes (7500, 7600, 7700).
 *   **Audible Alerts**: Plays a distinct tone when a new aircraft is detected.
 *   **Easy Web-Based Configuration**: An initial setup mode allows you to easily connect the device to your Wi-Fi and set your location.
@@ -98,17 +100,22 @@ The device will save your settings and restart. It will then automatically conne
 
 ### Usage
 
-*   **M5Stack Core2**: Tap the left virtual button (BtnA) to change pages. Press and hold the middle virtual button (BtnB) for 5 seconds to reset settings.
+*   **M5Stack Core2**: The airline and route overview is the default page. Tap the left virtual button (BtnA) to cycle through the 6 telemetry pages. Press and hold the middle virtual button (BtnB) for 5 seconds to reset settings.
 *   **M5StickC Plus 2**: Short press the large front button (BtnA) to change pages. Press and hold the right-side button (BtnB) for 5 seconds to reset settings.
 
-The first Core2 port intentionally retains the original 240 x 135 drawing coordinates. The interface therefore occupies the upper-left area of the Core2's larger display until the Core2-native layout is introduced.
+The Core2 overview uses the full 320 x 240 display. Its secondary telemetry pages retain the compact original presentation.
+
+Airline logo licensing and attribution are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Changelog
 
 **Unreleased**
 
 *   Added an M5Stack Core2 build target using the existing M5Unified hardware abstraction.
-*   Preserved the original interface dimensions and behavior for the initial port.
+*   Added a full-screen Core2 flight overview with airline branding, flight number, aircraft type, and airport cities.
+*   Expanded route parsing to use airport metadata and multi-leg route endpoints from the existing adsb.lol response.
+*   Added retry handling for transient route lookup failures and graceful fallbacks for missing data.
+*   Retained the original six telemetry pages as secondary Core2 pages and preserved the Plus2 presentation.
 
 **v1.1 - Sep 10,2025**
 
