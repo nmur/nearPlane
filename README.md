@@ -117,6 +117,7 @@ Airline logo licensing and attribution are documented in [THIRD_PARTY_NOTICES.md
 *   Added retry handling for transient route lookup failures and graceful fallbacks for missing data.
 *   Retained the original six telemetry pages as secondary Core2 pages and preserved the Plus2 presentation.
 *   Added responsive Core2 layouts for setup, Wi-Fi connection, status, error, and telemetry screens.
+*   Added three automatic retries to the initial Wi-Fi connection process.
 
 **v1.1 - Sep 10,2025**
 

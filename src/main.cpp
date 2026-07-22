@@ -31,6 +31,9 @@ const unsigned long NO_AIRCRAFT_POLL_INTERVAL = 10000;
 const unsigned long ERROR_POLL_INTERVAL = 60000;
 const unsigned long FLIGHT_DETAILS_RETRY_INTERVAL_MS = 30000;
 const long RESET_HOLD_TIME_MS = 5000;
+const int WIFI_CONNECTION_RETRY_COUNT = 3;
+const int WIFI_CONNECTION_STEPS_PER_ATTEMPT = 30;
+const unsigned long WIFI_CONNECTION_STEP_DELAY_MS = 500;
 
 // Audio settings. Volume ranges from 0 (muted) to 255 (maximum).
 // Frequencies are in hertz, so these can be changed to choose another chime.
@@ -537,24 +540,51 @@ void loadSettingsAndConnect() {
   if (largeLayout) {
     canvas.setTextColor(TFT_LIGHTGREY);
     canvas.setFont(&fonts::Font0);
-    canvas.drawString("This can take up to 15 seconds", centerX, 180);
+    canvas.drawString("Each attempt can take up to 15 seconds", centerX, 180);
   }
   canvas.pushSprite(0, 0);
-  WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(500);
-    const int innerWidth = progressWidth - 4;
-    canvas.fillRoundRect(progressX + 2, progressY + 2,
-                         (innerWidth * (attempts + 1)) / 30,
-                         largeLayout ? 10 : 6, largeLayout ? 3 : 2, TFT_GREEN);
+
+  const int totalConnectionAttempts = WIFI_CONNECTION_RETRY_COUNT + 1;
+  const int attemptTextY = largeLayout ? 205 : 116;
+  const int attemptTextTop = largeLayout ? 194 : 106;
+  for (int connectionAttempt = 0;
+       connectionAttempt < totalConnectionAttempts && WiFi.status() != WL_CONNECTED;
+       connectionAttempt++) {
+    if (connectionAttempt > 0) {
+      WiFi.disconnect();
+      delay(500);
+    }
+
+    canvas.fillRoundRect(progressX + 2, progressY + 2, progressWidth - 4,
+                         largeLayout ? 10 : 6, largeLayout ? 3 : 2, TFT_BLACK);
+    canvas.fillRect(0, attemptTextTop, canvas.width(), largeLayout ? 24 : 20, TFT_BLACK);
+    canvas.setTextColor(TFT_LIGHTGREY);
+    canvas.setTextDatum(MC_DATUM);
+    canvas.setFont(&fonts::Font0);
+    canvas.drawString("Attempt " + String(connectionAttempt + 1) + " of " +
+                          String(totalConnectionAttempts),
+                      centerX, attemptTextY);
     canvas.pushSprite(0, 0);
-    attempts++;
+
+    WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
+    int progressStep = 0;
+    while (WiFi.status() != WL_CONNECTED &&
+           progressStep < WIFI_CONNECTION_STEPS_PER_ATTEMPT) {
+      delay(WIFI_CONNECTION_STEP_DELAY_MS);
+      const int innerWidth = progressWidth - 4;
+      canvas.fillRoundRect(
+          progressX + 2, progressY + 2,
+          (innerWidth * (progressStep + 1)) / WIFI_CONNECTION_STEPS_PER_ATTEMPT,
+          largeLayout ? 10 : 6, largeLayout ? 3 : 2, TFT_GREEN);
+      canvas.pushSprite(0, 0);
+      progressStep++;
+    }
   }
   if (WiFi.status() != WL_CONNECTED) {
     drawCenteredStatusScreen(TFT_MAROON, TFT_YELLOW, "Connection Failed",
                              "Unable to join " + wifi_ssid,
-                             "Hold BtnB for 5 seconds to reset");
+                             String(totalConnectionAttempts) +
+                                 " attempts failed - hold BtnB 5 seconds to reset");
   } else {
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
     drawCenteredStatusScreen(TFT_DARKGREEN, TFT_GREEN, "Connected", wifi_ssid,
