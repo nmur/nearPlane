@@ -17,7 +17,7 @@ The tracker fetches data from **adsb.lol**, a free, open-source community-driven
 *   **Offline Airline Branding**: Includes logos for 55 major passenger and cargo airlines, with a code-based fallback for unknown operators.
 *   **Multi-Page Interface**: The Core2 overview is followed by 6 pages of detailed telemetry, including altitude, speed, heading, squawk code, and more.
 *   **Emergency Alerts**: The display highlights aircraft with emergency squawk codes (7500, 7600, 7700).
-*   **Audible Alerts**: Plays a distinct tone when a new aircraft is detected.
+*   **Audible Alerts**: Plays a soft two-note chime when a new aircraft is detected.
 *   **Easy Web-Based Configuration**: An initial setup mode allows you to easily connect the device to your Wi-Fi and set your location.
 *   **Factory Reset**: An easy hardware-button-based reset to clear settings.
 

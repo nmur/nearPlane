@@ -32,6 +32,13 @@ const unsigned long ERROR_POLL_INTERVAL = 60000;
 const unsigned long FLIGHT_DETAILS_RETRY_INTERVAL_MS = 30000;
 const long RESET_HOLD_TIME_MS = 5000;
 
+// Audio settings. Volume ranges from 0 (muted) to 255 (maximum).
+// Frequencies are in hertz, so these can be changed to choose another chime.
+const uint8_t SPEAKER_VOLUME = 32;
+const uint16_t STARTUP_TONE_HZ = 523;          // C5
+const uint16_t NEW_AIRCRAFT_TONE_1_HZ = 659;  // E5
+const uint16_t NEW_AIRCRAFT_TONE_2_HZ = 784;  // G5
+
 bool configMode = false;
 String wifi_ssid, wifi_password, latitude, longitude, radius_km;
 String api_url;
@@ -83,8 +90,8 @@ void setup() {
   auto cfg = M5.config();
   M5.begin(cfg);
   M5.Power.begin();
-  M5.Speaker.setVolume(255);
-  M5.Speaker.tone(2000, 100);
+  M5.Speaker.setVolume(SPEAKER_VOLUME);
+  M5.Speaker.tone(STARTUP_TONE_HZ, 50);
   M5.Display.setRotation(1);
   canvas.createSprite(M5.Display.width(), M5.Display.height());
   preferences.begin("adsb-config", false);
@@ -423,9 +430,9 @@ void drawResetScreen(int seconds_left) {
 }
 
 void playNewAircraftSound() {
-  M5.Speaker.tone(1400, 60);
-  delay(70);
-  M5.Speaker.tone(1800, 90);
+  M5.Speaker.tone(NEW_AIRCRAFT_TONE_1_HZ, 75);
+  delay(90);
+  M5.Speaker.tone(NEW_AIRCRAFT_TONE_2_HZ, 110);
 }
 
 void startConfigMode() {
