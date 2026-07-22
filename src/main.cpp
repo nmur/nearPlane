@@ -81,6 +81,10 @@ void drawDegreeSymbol(int x, int y);
 void drawBatteryStatus();
 void goToSleep();
 void drawClock();
+void drawCenteredStatusScreen(uint32_t background, uint32_t accent,
+                              const String &title, const String &message,
+                              const String &footer);
+String ellipsizeToWidth(String text, int maxWidth);
 void resetFlightDetailsState();
 #if defined(ARDUINO_M5STACK_Core2)
 void drawFlightOverview(JsonObjectConst aircraft);
@@ -125,14 +129,8 @@ void loop() {
 }
 
 void goToSleep() {
-  canvas.fillScreen(BLACK);
-  canvas.setTextColor(TFT_WHITE);
-  canvas.setTextDatum(MC_DATUM);
-  canvas.setFont(&fonts::FreeSansBold12pt7b);
-  canvas.drawString("No Activity", canvas.width() / 2, canvas.height() / 2 - 18);
-  canvas.setFont(&fonts::FreeSans9pt7b);
-  canvas.drawString("Going to sleep...", canvas.width() / 2, canvas.height() / 2 + 12);
-  canvas.pushSprite(0, 0);
+  drawCenteredStatusScreen(BLACK, TFT_YELLOW, "No Activity", "Going to sleep...",
+                           "Waking again in 60 seconds");
   delay(3000);
   M5.Display.sleep();
   M5.Power.deepSleep(DEEP_SLEEP_DURATION_S * 1000000ULL);
@@ -184,6 +182,49 @@ void drawClock() {
     canvas.drawString(timeBuffer, canvas.width() - 5, 5);
 }
 
+String ellipsizeToWidth(String text, int maxWidth) {
+  text.trim();
+  if (canvas.textWidth(text) <= maxWidth) {
+    return text;
+  }
+  while (text.length() > 1 && canvas.textWidth(text + "...") > maxWidth) {
+    text.remove(text.length() - 1);
+  }
+  return text + "...";
+}
+
+void drawCenteredStatusScreen(uint32_t background, uint32_t accent,
+                              const String &title, const String &message,
+                              const String &footer) {
+  const bool largeLayout = canvas.width() >= 300;
+  const int centerX = canvas.width() / 2;
+  const int centerY = canvas.height() / 2;
+  const int maxTextWidth = canvas.width() - (largeLayout ? 32 : 20);
+
+  canvas.fillScreen(background);
+  drawBatteryStatus();
+  drawClock();
+  canvas.setTextDatum(MC_DATUM);
+  canvas.setTextColor(accent);
+  canvas.setFont(&fonts::FreeSansBold12pt7b);
+  canvas.drawString(ellipsizeToWidth(title, maxTextWidth), centerX,
+                    centerY - (largeLayout ? 38 : 25));
+
+  if (!message.isEmpty()) {
+    canvas.setTextColor(TFT_WHITE);
+    canvas.setFont(&fonts::FreeSans9pt7b);
+    canvas.drawString(ellipsizeToWidth(message, maxTextWidth), centerX,
+                      centerY + (largeLayout ? 8 : 8));
+  }
+  if (!footer.isEmpty()) {
+    canvas.setTextColor(TFT_LIGHTGREY);
+    canvas.setFont(&fonts::Font0);
+    canvas.drawString(ellipsizeToWidth(footer, maxTextWidth), centerX,
+                      centerY + (largeLayout ? 42 : 31));
+  }
+  canvas.pushSprite(0, 0);
+}
+
 #if defined(ARDUINO_M5STACK_Core2)
 namespace {
 
@@ -212,17 +253,6 @@ const AircraftTypeIdentity aircraftTypeIdentities[] = {
     {"AT76", "ATR 72-600"},        {"DH8D", "Dash 8 Q400"},
     {"F100", "Fokker 100"},        {"SF34", "Saab 340"},
 };
-
-String ellipsizeToWidth(String text, int maxWidth) {
-  text.trim();
-  if (canvas.textWidth(text) <= maxWidth) {
-    return text;
-  }
-  while (text.length() > 1 && canvas.textWidth(text + "...") > maxWidth) {
-    text.remove(text.length() - 1);
-  }
-  return text + "...";
-}
 
 String airportCodeOrPlaceholder(const AirportDetails &airport) {
   return airport.code.isEmpty() ? "---" : airport.code;
@@ -401,12 +431,8 @@ void handleButtons() {
   if (isResetting && M5.BtnB.isPressed()) {
     unsigned long press_duration = millis() - btnB_press_start_time;
     if (press_duration >= RESET_HOLD_TIME_MS) {
-      canvas.fillScreen(TFT_ORANGE);
-      canvas.setTextColor(TFT_WHITE);
-      canvas.setFont(&fonts::FreeSansBold12pt7b);
-      canvas.setTextDatum(MC_DATUM);
-      canvas.drawString("Settings Reset!", canvas.width() / 2, canvas.height() / 2);
-      canvas.pushSprite(0, 0);
+      drawCenteredStatusScreen(TFT_ORANGE, TFT_WHITE, "Settings Reset",
+                               "Restarting nearPlane...", "");
       preferences.clear();
       delay(2500);
       ESP.restart();
@@ -418,14 +444,20 @@ void handleButtons() {
 }
 
 void drawResetScreen(int seconds_left) {
+  const bool largeLayout = canvas.width() >= 300;
   canvas.fillScreen(TFT_RED);
   canvas.setTextColor(TFT_WHITE);
   canvas.setTextDatum(MC_DATUM);
-  canvas.setFont(&fonts::FreeSans9pt7b);
-  canvas.drawString("Release to cancel", canvas.width() / 2, canvas.height() / 2 - 28);
-  canvas.setFont(&fonts::Font4);
+  canvas.setFont(largeLayout ? &fonts::FreeSansBold12pt7b : &fonts::FreeSans9pt7b);
+  canvas.drawString("Release to cancel", canvas.width() / 2,
+                    canvas.height() / 2 - (largeLayout ? 42 : 28));
+  if (largeLayout) {
+    canvas.setFont(&fonts::FreeSansBold18pt7b);
+  } else {
+    canvas.setFont(&fonts::Font4);
+  }
   canvas.drawString("Reset in " + String(seconds_left), canvas.width() / 2,
-                    canvas.height() / 2 + 22);
+                    canvas.height() / 2 + (largeLayout ? 20 : 22));
   canvas.pushSprite(0, 0);
 }
 
@@ -437,20 +469,34 @@ void playNewAircraftSound() {
 
 void startConfigMode() {
   const char *ap_ssid = "nearPlane-ADSB-Tracker-Setup";
+  const bool largeLayout = canvas.width() >= 300;
+  const int centerX = canvas.width() / 2;
   canvas.fillScreen(TFT_BLUE);
   canvas.setTextColor(TFT_WHITE);
   canvas.setTextDatum(MC_DATUM);
   canvas.setFont(&fonts::FreeSansBold12pt7b);
-  canvas.drawString("SETUP MODE", 120, 25);
+  canvas.drawString("SETUP MODE", centerX, largeLayout ? 34 : 17);
   canvas.setFont(&fonts::FreeSans9pt7b);
-  canvas.setTextDatum(ML_DATUM);
-  canvas.drawString("1. Connect to WiFi:", 15, 55);
+  canvas.drawString("1. Connect to this Wi-Fi", centerX, largeLayout ? 78 : 43);
   canvas.setTextColor(TFT_YELLOW);
-  canvas.drawString(ap_ssid, 35, 75);
+  if (largeLayout) {
+    canvas.setFont(&fonts::FreeSansBold9pt7b);
+  } else {
+    canvas.setFont(&fonts::Font0);
+  }
+  canvas.drawString(ellipsizeToWidth(ap_ssid, canvas.width() - 20), centerX,
+                    largeLayout ? 108 : 64);
   canvas.setTextColor(TFT_WHITE);
-  canvas.drawString("2. Open browser to:", 15, 95);
+  canvas.setFont(&fonts::FreeSans9pt7b);
+  canvas.drawString("2. Open a browser to", centerX, largeLayout ? 151 : 86);
   canvas.setTextColor(TFT_YELLOW);
-  canvas.drawString("192.168.4.1", 35, 115);
+  canvas.setFont(largeLayout ? &fonts::FreeSansBold12pt7b : &fonts::FreeSansBold9pt7b);
+  canvas.drawString("192.168.4.1", centerX, largeLayout ? 181 : 108);
+  if (largeLayout) {
+    canvas.setTextColor(TFT_LIGHTGREY);
+    canvas.setFont(&fonts::Font0);
+    canvas.drawString("The setup page may open automatically", centerX, 222);
+  }
   canvas.pushSprite(0, 0);
   WiFi.softAP(ap_ssid);
   dnsServer.start(53, "*", WiFi.softAPIP());
@@ -466,42 +512,53 @@ void loadSettingsAndConnect() {
   longitude = preferences.getString("lon", "0.0");
   radius_km = preferences.getString("radius", "50");
   api_url = "https://api.adsb.lol/v2/closest/" + latitude + "/" + longitude + "/" + radius_km;
+  const bool largeLayout = canvas.width() >= 300;
+  const int centerX = canvas.width() / 2;
+  const int progressWidth = largeLayout ? 256 : 180;
+  const int progressX = (canvas.width() - progressWidth) / 2;
+  const int progressY = largeLayout ? 150 : 85;
   canvas.fillScreen(BLACK);
+  drawBatteryStatus();
+  drawClock();
   canvas.setTextColor(TFT_WHITE);
-  canvas.setFont(&fonts::FreeSans9pt7b);
   canvas.setTextDatum(MC_DATUM);
-  canvas.drawString("Connecting to:", 120, 45);
-  canvas.setFont(&fonts::FreeSansBold9pt7b);
-  canvas.drawString(wifi_ssid, 120, 65);
-  canvas.drawRect(30, 85, 180, 10, TFT_WHITE);
+  canvas.setFont(&fonts::FreeSansBold12pt7b);
+  canvas.drawString("Connecting to Wi-Fi", centerX, largeLayout ? 62 : 35);
+  canvas.setTextColor(TFT_LIGHTGREY);
+  canvas.setFont(&fonts::FreeSans9pt7b);
+  canvas.drawString("Network", centerX, largeLayout ? 99 : 58);
+  canvas.setTextColor(TFT_YELLOW);
+  canvas.setFont(largeLayout ? &fonts::FreeSansBold12pt7b
+                             : &fonts::FreeSansBold9pt7b);
+  canvas.drawString(ellipsizeToWidth(wifi_ssid, canvas.width() - 24), centerX,
+                    largeLayout ? 124 : 74);
+  canvas.drawRoundRect(progressX, progressY, progressWidth, largeLayout ? 14 : 10,
+                       largeLayout ? 5 : 3, TFT_WHITE);
+  if (largeLayout) {
+    canvas.setTextColor(TFT_LIGHTGREY);
+    canvas.setFont(&fonts::Font0);
+    canvas.drawString("This can take up to 15 seconds", centerX, 180);
+  }
   canvas.pushSprite(0, 0);
   WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 30) {
     delay(500);
-    canvas.fillRect(31, 86, (178 * attempts) / 30, 8, TFT_GREEN);
+    const int innerWidth = progressWidth - 4;
+    canvas.fillRoundRect(progressX + 2, progressY + 2,
+                         (innerWidth * (attempts + 1)) / 30,
+                         largeLayout ? 10 : 6, largeLayout ? 3 : 2, TFT_GREEN);
     canvas.pushSprite(0, 0);
     attempts++;
   }
   if (WiFi.status() != WL_CONNECTED) {
-    canvas.fillScreen(TFT_RED);
-    canvas.setTextColor(TFT_WHITE);
-    canvas.setTextDatum(MC_DATUM);
-    canvas.setFont(&fonts::FreeSansBold12pt7b);
-    canvas.drawString("Connection Failed", 120, 45);
-    canvas.setFont(&fonts::FreeSans9pt7b);
-    canvas.drawString("Hold BtnB 5 sec to reset", 120, 90);
-    canvas.pushSprite(0, 0);
+    drawCenteredStatusScreen(TFT_MAROON, TFT_YELLOW, "Connection Failed",
+                             "Unable to join " + wifi_ssid,
+                             "Hold BtnB for 5 seconds to reset");
   } else {
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-    canvas.fillScreen(TFT_DARKGREEN);
-    canvas.setTextColor(TFT_WHITE);
-    canvas.setTextDatum(MC_DATUM);
-    canvas.setFont(&fonts::FreeSansBold12pt7b);
-    canvas.drawString("Connected", 120, 55);
-    canvas.setFont(&fonts::FreeSans9pt7b);
-    canvas.drawString("Waiting for data...", 120, 85);
-    canvas.pushSprite(0, 0);
+    drawCenteredStatusScreen(TFT_DARKGREEN, TFT_GREEN, "Connected", wifi_ssid,
+                             "Waiting for aircraft data...");
     delay(2000);
   }
 }
@@ -530,13 +587,9 @@ void displayCurrentPage() {
   drawClock();
 
   if (doc.isNull() || !doc["ac"].is<JsonArray>() || doc["ac"].as<JsonArray>().size() == 0) {
-    canvas.setTextColor(TFT_WHITE);
-    canvas.setFont(&fonts::FreeSansBold12pt7b);
-    canvas.setTextDatum(MC_DATUM);
-    canvas.drawString("No aircraft nearby.", canvas.width() / 2, canvas.height() / 2 - 8);
-    canvas.setFont(&fonts::FreeSans9pt7b);
-    canvas.drawString("Checking again soon...", canvas.width() / 2, canvas.height() / 2 + 22);
-    canvas.pushSprite(0, 0);
+    drawCenteredStatusScreen(BLACK, TFT_YELLOW, "No Aircraft Nearby",
+                             "Scanning your configured area...",
+                             "Checking again soon");
     return;
   }
   JsonObject aircraft = doc["ac"][0];
@@ -554,64 +607,81 @@ void displayCurrentPage() {
   String type = aircraft["t"] | "N/A";
   String squawk = aircraft["squawk"] | "----";
   String emergency = aircraft["emergency"] | "none";
+  const bool largeLayout = canvas.width() >= 300;
+  const int centerX = canvas.width() / 2;
+  const int labelX = largeLayout ? 28 : 15;
+  const int valueX = largeLayout ? canvas.width() - 28 : 225;
+  const int titleY = largeLayout ? 28 : 5;
+  const int registrationY = largeLayout ? 72 : 45;
+  const int dividerY = largeLayout ? 101 : 65;
+  const int row1Y = largeLayout ? 116 : 75;
+  const int row2Y = largeLayout ? 150 : 95;
+  const int row3Y = largeLayout ? 184 : 115;
+  const int degreeValueX = valueX - 7;
+  const int degreeSymbolX = valueX - 3;
   if (emergency != "none" || squawk == "7700" || squawk == "7600" || squawk == "7500") {
-    canvas.fillRect(0, 0, 240, 40, TFT_RED);
+    canvas.fillRect(0, largeLayout ? 22 : 0, canvas.width(), largeLayout ? 47 : 40,
+                    TFT_RED);
     canvas.setTextColor(TFT_WHITE);
   } else {
     canvas.setTextColor(TFT_YELLOW);
   }
   canvas.setFont(&fonts::Orbitron_Light_32);
   canvas.setTextDatum(TC_DATUM);
-  canvas.drawString(flight, 120, 5);
+  canvas.drawString(ellipsizeToWidth(flight, canvas.width() - 40), centerX, titleY);
   canvas.setTextColor(TFT_WHITE);
   canvas.setFont(&fonts::FreeSans9pt7b);
   canvas.setTextDatum(TC_DATUM);
-  canvas.drawString(reg + " (" + type + ")", 120, 45);
-  canvas.drawLine(10, 65, 230, 65, TFT_DARKGREY);
+  canvas.drawString(ellipsizeToWidth(reg + " (" + type + ")", canvas.width() - 32),
+                    centerX, registrationY);
+  canvas.drawLine(10, dividerY, canvas.width() - 10, dividerY, TFT_DARKGREY);
   switch (telemetryPage) {
   case 0: {
     canvas.setFont(&fonts::FreeSans9pt7b);
     canvas.setTextDatum(TL_DATUM);
-    canvas.drawString("ALT", 15, 75);
-    canvas.drawString("GND SPD", 15, 95);
-    canvas.drawString("ROUTE", 15, 115);
+    canvas.drawString("ALT", labelX, row1Y);
+    canvas.drawString("GND SPD", labelX, row2Y);
+    canvas.drawString("ROUTE", labelX, row3Y);
     canvas.setFont(&fonts::FreeSansBold12pt7b);
     canvas.setTextDatum(TR_DATUM);
-    canvas.drawString(String(aircraft["alt_baro"] | 0) + " ft", 225, 75);
-    canvas.drawString(String(aircraft["gs"].as<float>(), 0) + " kt", 225, 95);
+    canvas.drawString(String(aircraft["alt_baro"] | 0) + " ft", valueX, row1Y);
+    canvas.drawString(String(aircraft["gs"].as<float>(), 0) + " kt", valueX, row2Y);
     String origin = flightDetails.origin.code.isEmpty() ? "N/A" : flightDetails.origin.code;
     String destination =
         flightDetails.destination.code.isEmpty() ? "N/A" : flightDetails.destination.code;
     String route = origin + " > " + destination;
-    canvas.drawString(route, 225, 115);
+    canvas.drawString(ellipsizeToWidth(route, valueX - labelX - 80), valueX, row3Y);
     break;
   }
   case 1: {
     canvas.setFont(&fonts::FreeSans9pt7b);
     canvas.setTextDatum(TL_DATUM);
-    canvas.drawString("HDG", 15, 75);
-    canvas.drawString("V/S", 15, 95);
-    canvas.drawString("ROLL", 15, 115);
+    canvas.drawString("HDG", labelX, row1Y);
+    canvas.drawString("V/S", labelX, row2Y);
+    canvas.drawString("ROLL", labelX, row3Y);
     canvas.setFont(&fonts::FreeSansBold12pt7b);
     canvas.setTextDatum(TR_DATUM);
-    canvas.drawString(String(aircraft["true_heading"].as<float>(), 0), 218, 75);
-    drawDegreeSymbol(222, 75 + 3);
-    canvas.drawString(String(aircraft["baro_rate"] | 0) + " ft/m", 225, 95);
-    canvas.drawString(String(aircraft["roll"].as<float>(), 1), 218, 115);
-    drawDegreeSymbol(222, 115 + 3);
+    canvas.drawString(String(aircraft["true_heading"].as<float>(), 0), degreeValueX,
+                      row1Y);
+    drawDegreeSymbol(degreeSymbolX, row1Y + 3);
+    canvas.drawString(String(aircraft["baro_rate"] | 0) + " ft/m", valueX, row2Y);
+    canvas.drawString(String(aircraft["roll"].as<float>(), 1), degreeValueX, row3Y);
+    drawDegreeSymbol(degreeSymbolX, row3Y + 3);
     break;
   }
   case 2: {
     canvas.setFont(&fonts::FreeSans9pt7b);
     canvas.setTextDatum(TL_DATUM);
-    canvas.drawString("MACH", 15, 75);
-    canvas.drawString("IAS/TAS", 15, 95);
-    canvas.drawString("GEOM ALT", 15, 115);
+    canvas.drawString("MACH", labelX, row1Y);
+    canvas.drawString("IAS/TAS", labelX, row2Y);
+    canvas.drawString("GEOM ALT", labelX, row3Y);
     canvas.setFont(&fonts::FreeSansBold12pt7b);
     canvas.setTextDatum(TR_DATUM);
-    canvas.drawString(String(aircraft["mach"].as<float>(), 3), 225, 75);
-    canvas.drawString(String(aircraft["ias"] | 0) + "/" + String(aircraft["tas"] | 0) + "kt", 225, 95);
-    canvas.drawString(String(aircraft["alt_geom"] | 0) + " ft", 225, 115);
+    canvas.drawString(String(aircraft["mach"].as<float>(), 3), valueX, row1Y);
+    canvas.drawString(String(aircraft["ias"] | 0) + "/" +
+                          String(aircraft["tas"] | 0) + "kt",
+                      valueX, row2Y);
+    canvas.drawString(String(aircraft["alt_geom"] | 0) + " ft", valueX, row3Y);
     break;
   }
   case 3: {
@@ -622,41 +692,43 @@ void displayCurrentPage() {
     nav_modes_str.trim();
     canvas.setFont(&fonts::FreeSans9pt7b);
     canvas.setTextDatum(TL_DATUM);
-    canvas.drawString("AP ALT", 15, 75);
-    canvas.drawString("AP HDG", 15, 95);
-    canvas.drawString("AP MODE", 15, 115);
+    canvas.drawString("AP ALT", labelX, row1Y);
+    canvas.drawString("AP HDG", labelX, row2Y);
+    canvas.drawString("AP MODE", labelX, row3Y);
     canvas.setFont(&fonts::FreeSansBold12pt7b);
     canvas.setTextDatum(TR_DATUM);
-    canvas.drawString(String(aircraft["nav_altitude_mcp"] | 0) + " ft", 225, 75);
-    canvas.drawString(String(aircraft["nav_heading"].as<float>(), 0), 218, 95);
-    drawDegreeSymbol(222, 95 + 3);
+    canvas.drawString(String(aircraft["nav_altitude_mcp"] | 0) + " ft", valueX, row1Y);
+    canvas.drawString(String(aircraft["nav_heading"].as<float>(), 0), degreeValueX,
+                      row2Y);
+    drawDegreeSymbol(degreeSymbolX, row2Y + 3);
     canvas.setFont(&fonts::FreeSansBold9pt7b);
-    canvas.drawString(nav_modes_str, 225, 115);
+    canvas.drawString(ellipsizeToWidth(nav_modes_str, valueX - labelX - 80), valueX,
+                      row3Y);
     break;
   }
   case 4: {
     canvas.setFont(&fonts::FreeSans9pt7b);
     canvas.setTextDatum(TL_DATUM);
-    canvas.drawString("SQK", 15, 75);
-    canvas.drawString("ICAO", 15, 95);
-    canvas.drawString("CAT", 15, 115);
+    canvas.drawString("SQK", labelX, row1Y);
+    canvas.drawString("ICAO", labelX, row2Y);
+    canvas.drawString("CAT", labelX, row3Y);
     canvas.setFont(&fonts::FreeSansBold12pt7b);
     canvas.setTextDatum(TR_DATUM);
-    canvas.drawString(squawk, 225, 75);
-    canvas.drawString(aircraft["hex"] | "N/A", 225, 95);
-    canvas.drawString(aircraft["category"] | "N/A", 225, 115);
+    canvas.drawString(squawk, valueX, row1Y);
+    canvas.drawString(aircraft["hex"] | "N/A", valueX, row2Y);
+    canvas.drawString(aircraft["category"] | "N/A", valueX, row3Y);
     break;
   }
   case 5: {
     canvas.setFont(&fonts::FreeSans9pt7b);
     canvas.setTextDatum(TL_DATUM);
-    canvas.drawString("OAT/TAT", 15, 75);
-    canvas.drawString("WIND", 15, 95);
-    canvas.drawString("RSSI", 15, 115);
+    canvas.drawString("OAT/TAT", labelX, row1Y);
+    canvas.drawString("WIND", labelX, row2Y);
+    canvas.drawString("RSSI", labelX, row3Y);
     canvas.setFont(&fonts::FreeSansBold12pt7b);
     canvas.setTextDatum(TR_DATUM);
-    int x_pos = 225;
-    int y_pos = 75;
+    int x_pos = valueX;
+    int y_pos = row1Y;
     String tat_val = String(aircraft["tat"] | 0);
     String oat_val = String(aircraft["oat"] | 0);
     canvas.drawString("C", x_pos, y_pos);
@@ -674,17 +746,19 @@ void displayCurrentPage() {
     canvas.drawString(oat_val, x_pos, y_pos);
     String windStr = String(aircraft["wd"] | 0);
     String speedStr = " / " + String(aircraft["ws"] | 0) + "kt";
-    canvas.drawString(windStr, 225 - canvas.textWidth(speedStr), 95);
-    drawDegreeSymbol(225 - canvas.textWidth(speedStr) + 4, 95 + 3);
-    canvas.drawString(speedStr, 225, 95);
-    canvas.drawString(String(aircraft["rssi"].as<float>(), 1) + " dBm", 225, 115);
+    canvas.drawString(windStr, valueX - canvas.textWidth(speedStr), row2Y);
+    drawDegreeSymbol(valueX - canvas.textWidth(speedStr) + 4, row2Y + 3);
+    canvas.drawString(speedStr, valueX, row2Y);
+    canvas.drawString(String(aircraft["rssi"].as<float>(), 1) + " dBm", valueX,
+                      row3Y);
     break;
   }
   }
   canvas.setTextColor(TFT_DARKGREY);
   canvas.setFont(&fonts::Font0);
   canvas.setTextDatum(BC_DATUM);
-  canvas.drawString(String(currentPage + 1) + "/" + String(NUM_PAGES), 120, 134);
+  canvas.drawString(String(currentPage + 1) + "/" + String(NUM_PAGES), centerX,
+                    canvas.height() - 2);
   canvas.pushSprite(0, 0);
 }
 
@@ -753,14 +827,9 @@ void fetchAircraftData() {
     doc.clear();
     DeserializationError error = deserializeJson(doc, http.getStream());
     if (error) {
-      canvas.fillScreen(TFT_DARKCYAN);
-      drawBatteryStatus();
-      drawClock();
-      canvas.setTextColor(TFT_WHITE);
-      canvas.setTextDatum(MC_DATUM);
-      canvas.setFont(&fonts::FreeSansBold12pt7b);
-      canvas.drawString("JSON PARSE ERROR", 120, 67);
-      canvas.pushSprite(0, 0);
+      drawCenteredStatusScreen(TFT_DARKCYAN, TFT_YELLOW, "Data Error",
+                               "The aircraft response was invalid",
+                               "Retrying in 60 seconds");
       pollInterval = ERROR_POLL_INTERVAL;
     } else if (doc["ac"].is<JsonArray>() && doc["ac"].as<JsonArray>().size() > 0) {
       lastActivityTime = millis();
@@ -785,16 +854,9 @@ void fetchAircraftData() {
     doc.clear();
     lastSeenAircraftReg = "";
     resetFlightDetailsState();
-    canvas.fillScreen(TFT_MAROON);
-    drawBatteryStatus();
-    drawClock();
-    canvas.setTextColor(TFT_WHITE);
-    canvas.setTextDatum(MC_DATUM);
-    canvas.setFont(&fonts::FreeSansBold12pt7b);
-    canvas.drawString("API ERROR", 120, 50);
-    canvas.setFont(&fonts::FreeSans9pt7b);
-    canvas.drawString("HTTP Code: " + String(httpCode), 120, 80);
-    canvas.pushSprite(0, 0);
+    drawCenteredStatusScreen(TFT_MAROON, TFT_YELLOW, "Service Unavailable",
+                             "HTTP code " + String(httpCode),
+                             "Retrying in 60 seconds");
     pollInterval = ERROR_POLL_INTERVAL;
   }
   http.end();

@@ -103,7 +103,7 @@ The device will save your settings and restart. It will then automatically conne
 *   **M5Stack Core2**: The airline and route overview is the default page. Tap the left virtual button (BtnA) to cycle through the 6 telemetry pages. Press and hold the middle virtual button (BtnB) for 5 seconds to reset settings.
 *   **M5StickC Plus 2**: Short press the large front button (BtnA) to change pages. Press and hold the right-side button (BtnB) for 5 seconds to reset settings.
 
-The Core2 overview uses the full 320 x 240 display. Its secondary telemetry pages retain the compact original presentation.
+The Core2 overview, telemetry pages, setup flow, and status messages all use responsive 320 x 240 layouts. The Plus2 keeps its compact 240 x 135 presentation.
 
 Airline logo licensing and attribution are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
@@ -116,6 +116,7 @@ Airline logo licensing and attribution are documented in [THIRD_PARTY_NOTICES.md
 *   Expanded route parsing to use airport metadata and multi-leg route endpoints from the existing adsb.lol response.
 *   Added retry handling for transient route lookup failures and graceful fallbacks for missing data.
 *   Retained the original six telemetry pages as secondary Core2 pages and preserved the Plus2 presentation.
+*   Added responsive Core2 layouts for setup, Wi-Fi connection, status, error, and telemetry screens.
 
 **v1.1 - Sep 10,2025**
 
