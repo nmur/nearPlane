@@ -38,16 +38,18 @@ void clearFlightDetails(FlightDetails &details, const String &callsign) {
 bool parseFlightDetailsResponse(JsonVariantConst response, const String &callsign,
                                 FlightDetails &details) {
   clearFlightDetails(details, callsign);
-  if (!response.is<JsonArrayConst>()) {
+  JsonObjectConst route;
+  if (response.is<JsonObjectConst>()) {
+    route = response.as<JsonObjectConst>();
+  } else if (response.is<JsonArrayConst>()) {
+    JsonArrayConst routes = response.as<JsonArrayConst>();
+    if (!routes.isNull() && routes.size() > 0 && routes[0].is<JsonObjectConst>()) {
+      route = routes[0].as<JsonObjectConst>();
+    }
+  }
+  if (route.isNull()) {
     return false;
   }
-
-  JsonArrayConst routes = response.as<JsonArrayConst>();
-  if (routes.isNull() || routes.size() == 0 || !routes[0].is<JsonObjectConst>()) {
-    return false;
-  }
-
-  JsonObjectConst route = routes[0].as<JsonObjectConst>();
   details.airlineIcao = stringValue(route["airline_code"]);
   details.number = stringValue(route["number"]);
   details.plausible = route["plausible"] | false;

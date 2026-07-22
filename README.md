@@ -120,6 +120,8 @@ Airline logo licensing and attribution are documented in [THIRD_PARTY_NOTICES.md
 *   Added responsive Core2 layouts for setup, Wi-Fi connection, status, error, and telemetry screens.
 *   Added three automatic retries to the initial Wi-Fi connection process.
 *   Added automatic coordinate-based time-zone detection with a cached offline fallback.
+*   Switched route lookups to ADSB.lol's single-flight endpoint and reduced repeated failed requests.
+*   Added `429` backoff handling while retaining the last successful aircraft display.
 
 **v1.1 - Sep 10,2025**
 

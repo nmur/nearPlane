@@ -25,11 +25,13 @@ const int LEGACY_PAGE_OFFSET = 1;
 const int NUM_PAGES = 6;
 const int LEGACY_PAGE_OFFSET = 0;
 #endif
-unsigned long pollInterval = 2000;
-const unsigned long SHORT_POLL_INTERVAL = 2000;
-const unsigned long NO_AIRCRAFT_POLL_INTERVAL = 10000;
+unsigned long pollInterval = 10000;
+const unsigned long SHORT_POLL_INTERVAL = 10000;
+const unsigned long NO_AIRCRAFT_POLL_INTERVAL = 15000;
 const unsigned long ERROR_POLL_INTERVAL = 60000;
-const unsigned long FLIGHT_DETAILS_RETRY_INTERVAL_MS = 30000;
+const unsigned long FLIGHT_DETAILS_RETRY_INTERVAL_MS = 5UL * 60UL * 1000UL;
+const unsigned long RATE_LIMIT_DEFAULT_BACKOFF_MS = 5UL * 60UL * 1000UL;
+const unsigned long RATE_LIMIT_MAX_BACKOFF_MS = 60UL * 60UL * 1000UL;
 const unsigned long TIME_ZONE_REFRESH_INTERVAL_MS = 6UL * 60UL * 60UL * 1000UL;
 const long RESET_HOLD_TIME_MS = 5000;
 const int WIFI_CONNECTION_RETRY_COUNT = 3;
@@ -55,6 +57,7 @@ String lastFlightCodeForDetails = "";
 FlightDetails flightDetails;
 bool flightDetailsLookupComplete = false;
 unsigned long lastFlightDetailsAttemptTime = 0;
+unsigned long flightDetailsRetryIntervalMs = FLIGHT_DETAILS_RETRY_INTERVAL_MS;
 
 unsigned long btnB_press_start_time = 0;
 bool isResetting = false;
@@ -89,6 +92,7 @@ void drawCenteredStatusScreen(uint32_t background, uint32_t accent,
                               const String &title, const String &message,
                               const String &footer);
 String ellipsizeToWidth(String text, int maxWidth);
+unsigned long rateLimitBackoffMs(HTTPClient &http, unsigned long defaultMs);
 void resetFlightDetailsState();
 #if defined(ARDUINO_M5STACK_Core2)
 void drawFlightOverview(JsonObjectConst aircraft);
@@ -232,6 +236,20 @@ void drawCenteredStatusScreen(uint32_t background, uint32_t accent,
                       centerY + (largeLayout ? 42 : 31));
   }
   canvas.pushSprite(0, 0);
+}
+
+unsigned long rateLimitBackoffMs(HTTPClient &http, unsigned long defaultMs) {
+  const long retryAfterSeconds = http.header("Retry-After").toInt();
+  if (retryAfterSeconds <= 0) {
+    return defaultMs;
+  }
+  unsigned long backoffMs;
+  if (retryAfterSeconds >= static_cast<long>(RATE_LIMIT_MAX_BACKOFF_MS / 1000UL)) {
+    backoffMs = RATE_LIMIT_MAX_BACKOFF_MS;
+  } else {
+    backoffMs = static_cast<unsigned long>(retryAfterSeconds) * 1000UL;
+  }
+  return max(backoffMs, ERROR_POLL_INTERVAL);
 }
 
 #if defined(ARDUINO_M5STACK_Core2)
@@ -403,8 +421,13 @@ void drawFlightOverview(JsonObjectConst aircraft) {
     canvas.drawString(ellipsizeToWidth(airportCity(flightDetails.destination), 136), 248, 202);
   } else {
     canvas.setTextDatum(TC_DATUM);
-    canvas.drawString(flightDetailsLookupComplete ? "Route unavailable" : "Looking up route...",
-                      canvas.width() / 2, 202);
+    String routeStatus = "Looking up route...";
+    if (flightDetailsLookupComplete) {
+      routeStatus = "Route unavailable";
+    } else if (lastFlightDetailsAttemptTime != 0) {
+      routeStatus = "Route lookup retrying...";
+    }
+    canvas.drawString(routeStatus, canvas.width() / 2, 202);
   }
 
   canvas.setFont(&fonts::Font0);
@@ -878,37 +901,43 @@ void fetchFlightDetails(String flightCode) {
     lastFlightCodeForDetails = flightCode;
     flightDetailsLookupComplete = false;
     lastFlightDetailsAttemptTime = 0;
+    flightDetailsRetryIntervalMs = FLIGHT_DETAILS_RETRY_INTERVAL_MS;
   }
   if (flightDetailsLookupComplete) {
     return;
   }
   unsigned long now = millis();
   if (lastFlightDetailsAttemptTime != 0 &&
-      now - lastFlightDetailsAttemptTime < FLIGHT_DETAILS_RETRY_INTERVAL_MS) {
+      now - lastFlightDetailsAttemptTime < flightDetailsRetryIntervalMs) {
     return;
   }
   lastFlightDetailsAttemptTime = now;
 
-  JsonDocument requestDoc;
-  JsonArray planes = requestDoc["planes"].to<JsonArray>();
-  JsonObject plane = planes.add<JsonObject>();
-  plane["callsign"] = flightCode;
-  plane["lat"] = latitude.toFloat();
-  plane["lng"] = longitude.toFloat();
-  String requestBody;
-  serializeJson(requestDoc, requestBody);
   HTTPClient http;
-  http.begin("https://api.adsb.lol/api/0/routeset");
+  const String routeUrl = "https://api.adsb.lol/api/0/route/" + flightCode + "/" +
+                          latitude + "/" + longitude;
+  http.begin(routeUrl);
   http.setTimeout(5000);
-  http.addHeader("Content-Type", "application/json");
-  int httpCode = http.POST(requestBody);
-  if (httpCode >= 200 && httpCode < 300) {
+  const char *routeResponseHeaders[] = {"Retry-After"};
+  http.collectHeaders(routeResponseHeaders, 1);
+  int httpCode = http.GET();
+  Serial.printf("[route] HTTP status: %d\n", httpCode);
+  if (httpCode == HTTP_CODE_OK) {
     JsonDocument responseDoc;
     DeserializationError error = deserializeJson(responseDoc, http.getStream());
     if (!error && parseFlightDetailsResponse(responseDoc.as<JsonVariantConst>(), flightCode,
                                              flightDetails)) {
       flightDetailsLookupComplete = true;
+      Serial.printf("[route] %s -> %s\n", flightDetails.origin.code.c_str(),
+                    flightDetails.destination.code.c_str());
     }
+  } else if (httpCode == 429) {
+    flightDetailsRetryIntervalMs =
+        rateLimitBackoffMs(http, RATE_LIMIT_DEFAULT_BACKOFF_MS);
+    Serial.printf("[route] Rate limited; retrying in %lu seconds\n",
+                  flightDetailsRetryIntervalMs / 1000UL);
+  } else if (httpCode >= 400 && httpCode < 500) {
+    flightDetailsLookupComplete = true;
   }
   http.end();
 }
@@ -916,6 +945,7 @@ void fetchFlightDetails(String flightCode) {
 void resetFlightDetailsState() {
   lastFlightCodeForDetails = "";
   lastFlightDetailsAttemptTime = 0;
+  flightDetailsRetryIntervalMs = FLIGHT_DETAILS_RETRY_INTERVAL_MS;
   flightDetailsLookupComplete = false;
   clearFlightDetails(flightDetails);
 }
@@ -927,6 +957,8 @@ void fetchAircraftData() {
   HTTPClient http;
   http.begin(api_url);
   http.setTimeout(5000);
+  const char *aircraftResponseHeaders[] = {"Retry-After"};
+  http.collectHeaders(aircraftResponseHeaders, 1);
   int httpCode = http.GET();
   if (httpCode == HTTP_CODE_OK) {
     doc.clear();
@@ -954,6 +986,19 @@ void fetchAircraftData() {
       doc.clear();
       displayCurrentPage();
       pollInterval = NO_AIRCRAFT_POLL_INTERVAL;
+    }
+  } else if (httpCode == 429) {
+    pollInterval = rateLimitBackoffMs(http, RATE_LIMIT_DEFAULT_BACKOFF_MS);
+    Serial.printf("[aircraft] Rate limited; retrying in %lu seconds\n",
+                  pollInterval / 1000UL);
+    if (!doc.isNull() && doc["ac"].is<JsonArray>() &&
+        doc["ac"].as<JsonArray>().size() > 0) {
+      displayCurrentPage();
+    } else {
+      const unsigned long waitMinutes = max(1UL, pollInterval / 60000UL);
+      drawCenteredStatusScreen(TFT_MAROON, TFT_YELLOW, "Requests Paused",
+                               "ADSB.lol is rate limiting requests",
+                               "Retrying in " + String(waitMinutes) + " minute(s)");
     }
   } else {
     doc.clear();
