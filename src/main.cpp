@@ -309,6 +309,51 @@ String aircraftTypeLabel(String code) {
   return code;
 }
 
+void drawAircraftTypeBlock(const String &type, int centerX, int maxWidth) {
+  String label = aircraftTypeLabel(type);
+  String firstLine = label;
+  String secondLine;
+  const int separator = label.indexOf(" - ");
+
+  if (separator > 0) {
+    firstLine = label.substring(0, separator);
+    secondLine = label.substring(separator + 3);
+  } else {
+    canvas.setFont(&fonts::FreeSansBold12pt7b);
+    if (canvas.textWidth(label) > maxWidth) {
+      const int midpoint = label.length() / 2;
+      int splitAt = label.lastIndexOf(' ', midpoint);
+      if (splitAt < 0) {
+        splitAt = label.indexOf(' ', midpoint);
+      }
+      if (splitAt > 0) {
+        firstLine = label.substring(0, splitAt);
+        secondLine = label.substring(splitAt + 1);
+      }
+    }
+  }
+
+  canvas.setTextColor(TFT_WHITE);
+  canvas.setTextDatum(TC_DATUM);
+  canvas.setFont(&fonts::FreeSansBold12pt7b);
+  if (secondLine.isEmpty()) {
+    if (canvas.textWidth(firstLine) > maxWidth) {
+      canvas.setFont(&fonts::FreeSansBold9pt7b);
+    }
+    canvas.drawString(ellipsizeToWidth(firstLine, maxWidth), centerX, 99);
+    return;
+  }
+
+  canvas.drawString(ellipsizeToWidth(firstLine, maxWidth), centerX, 88);
+  canvas.setFont(&fonts::FreeSans9pt7b);
+  int secondLineY = 114;
+  if (canvas.textWidth(secondLine) > maxWidth) {
+    canvas.setFont(&fonts::Font0);
+    secondLineY = 119;
+  }
+  canvas.drawString(ellipsizeToWidth(secondLine, maxWidth), centerX, secondLineY);
+}
+
 const AirlineIdentity *currentAirlineIdentity(const String &callsign) {
   const AirlineIdentity *identity = findAirlineByCode(flightDetails.airlineIcao);
   return identity != nullptr ? identity : inferAirlineFromCallsign(callsign);
@@ -341,7 +386,6 @@ void drawFlightOverview(JsonObjectConst aircraft) {
 
   String callsign = aircraft["flight"] | "N/A";
   callsign.trim();
-  String registration = aircraft["r"] | "N/A";
   String type = aircraft["t"] | "N/A";
   String squawk = aircraft["squawk"] | "----";
   String emergency = aircraft["emergency"] | "none";
@@ -393,12 +437,7 @@ void drawFlightOverview(JsonObjectConst aircraft) {
   }
   canvas.drawString(ellipsizeToWidth(flightNumber, 174), 226, 48);
 
-  canvas.setTextColor(TFT_WHITE);
-  canvas.setFont(&fonts::FreeSansBold9pt7b);
-  canvas.drawString(ellipsizeToWidth(aircraftTypeLabel(type), 174), 226, 93);
-  canvas.setFont(&fonts::Font0);
-  canvas.setTextColor(TFT_DARKGREY);
-  canvas.drawString("REG " + registration, 226, 119);
+  drawAircraftTypeBlock(type, 226, 174);
 
   canvas.drawLine(8, 138, 312, 138, TFT_DARKGREY);
   canvas.setFont(&fonts::Font0);
