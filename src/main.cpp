@@ -30,6 +30,7 @@ const unsigned long SHORT_POLL_INTERVAL = 2000;
 const unsigned long NO_AIRCRAFT_POLL_INTERVAL = 10000;
 const unsigned long ERROR_POLL_INTERVAL = 60000;
 const unsigned long FLIGHT_DETAILS_RETRY_INTERVAL_MS = 30000;
+const unsigned long TIME_ZONE_REFRESH_INTERVAL_MS = 6UL * 60UL * 60UL * 1000UL;
 const long RESET_HOLD_TIME_MS = 5000;
 const int WIFI_CONNECTION_RETRY_COUNT = 3;
 const int WIFI_CONNECTION_STEPS_PER_ATTEMPT = 30;
@@ -46,6 +47,7 @@ bool configMode = false;
 String wifi_ssid, wifi_password, latitude, longitude, radius_km;
 String api_url;
 unsigned long lastPollTime = 0;
+unsigned long lastTimeZoneRefreshTime = 0;
 int currentPage = 0;
 JsonDocument doc;
 String lastSeenAircraftReg = "";
@@ -62,8 +64,6 @@ const unsigned long INACTIVITY_TIMEOUT_MS = 300000;
 const uint64_t DEEP_SLEEP_DURATION_S = 60;
 
 const char* ntpServer = "pool.ntp.org";
-const long gmtOffset_sec = 3 * 3600;
-const int daylightOffset_sec = 0;
 
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>nearPlane Tracker Setup</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;margin:0;background-color:#f5f5f7;color:#1d1d1f}.container{padding:25px;max-width:550px;margin:30px auto;background-color:#fff;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,.1)}h1{color:#1d1d1f;text-align:center;margin-bottom:25px;font-weight:600}form{display:flex;flex-direction:column}label{margin-bottom:8px;color:#6e6e73;font-weight:500}input{padding:14px;margin-bottom:20px;border:1px solid #d2d2d7;border-radius:8px;font-size:16px;transition:border-color .2s,box-shadow .2s}input:focus{border-color:#007aff;box-shadow:0 0 0 3px rgba(0,122,255,.25);outline:none}button{background-color:#007aff;color:#fff;padding:16px;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;transition:background-color .2s}button:hover{background-color:#0056b3}.footer{text-align:center;margin-top:20px;color:#86868b;font-size:12px}</style></head><body><div class="container"><h1>nearPlane ADSB Tracker Setup</h1><form action="/save" method="POST"><label for="ssid">WiFi Network (SSID)</label><input type="text" id="ssid" name="ssid" required><label for="password">WiFi Password</label><input type="text" id="password" name="password"><label for="lat">Your Latitude</label><input type="text" id="lat" name="lat" required placeholder="e.g., 41.015137"><label for="lon">Your Longitude</label><input type="text" id="lon" name="lon" required placeholder="e.g., 28.979530"><label for="radius">Scan Radius (km)</label><input type="number" id="radius" name="radius" value="50" required><button type="submit">Save & Reboot</button></form></div><div class="footer">nearPlane ADSB Tracker</div></body></html>
@@ -75,6 +75,7 @@ void handleNotFound();
 void displayCurrentPage();
 void startConfigMode();
 void loadSettingsAndConnect();
+String configureLocalTimeFromCoordinates();
 void fetchAircraftData();
 void fetchFlightDetails(String flightCode);
 void playNewAircraftSound();
@@ -96,6 +97,7 @@ void drawFlightOverview(JsonObjectConst aircraft);
 void setup() {
   auto cfg = M5.config();
   M5.begin(cfg);
+  Serial.begin(115200);
   M5.Power.begin();
   M5.Speaker.setVolume(SPEAKER_VOLUME);
   M5.Speaker.tone(STARTUP_TONE_HZ, 50);
@@ -124,6 +126,10 @@ void loop() {
     if (WiFi.status() == WL_CONNECTED && (millis() - lastPollTime > pollInterval)) {
       fetchAircraftData();
       lastPollTime = millis();
+    }
+    if (WiFi.status() == WL_CONNECTED && lastTimeZoneRefreshTime != 0 &&
+        millis() - lastTimeZoneRefreshTime >= TIME_ZONE_REFRESH_INTERVAL_MS) {
+      configureLocalTimeFromCoordinates();
     }
     if (millis() - lastActivityTime > INACTIVITY_TIMEOUT_MS) {
       goToSleep();
@@ -509,6 +515,73 @@ void startConfigMode() {
   server.begin();
 }
 
+String configureLocalTimeFromCoordinates() {
+  // Start NTP in UTC while the coordinate-based offset is being resolved.
+  configTime(0, 0, ntpServer);
+  struct tm timeInfo;
+  getLocalTime(&timeInfo, 3000);
+
+  const String locationKey = latitude + "," + longitude;
+  long utcOffsetSeconds = 0;
+  String timeZoneName = "UTC";
+  bool lookupSucceeded = false;
+  bool usedCachedValue = false;
+
+  HTTPClient timeZoneHttp;
+  const String timeZoneUrl =
+      "https://api.open-meteo.com/v1/forecast?latitude=" + latitude +
+      "&longitude=" + longitude + "&timezone=auto&forecast_days=1";
+  timeZoneHttp.begin(timeZoneUrl);
+  timeZoneHttp.setTimeout(5000);
+  timeZoneHttp.setUserAgent("nearPlane/1.0");
+  const int timeZoneHttpCode = timeZoneHttp.GET();
+  Serial.printf("[timezone] HTTP status: %d\n", timeZoneHttpCode);
+  if (timeZoneHttpCode == HTTP_CODE_OK) {
+    const String timeZonePayload = timeZoneHttp.getString();
+    Serial.printf("[timezone] Response length: %u bytes\n", timeZonePayload.length());
+    JsonDocument timeZoneDoc;
+    DeserializationError error = deserializeJson(timeZoneDoc, timeZonePayload);
+    if (!error && !timeZoneDoc["utc_offset_seconds"].isNull() &&
+        !timeZoneDoc["timezone"].isNull()) {
+      const long resolvedOffset = timeZoneDoc["utc_offset_seconds"] | 0L;
+      const String resolvedName = timeZoneDoc["timezone"] | "";
+      Serial.printf("[timezone] Resolved %s, UTC offset %ld seconds\n",
+                    resolvedName.c_str(), resolvedOffset);
+      if (resolvedOffset >= -12L * 3600L && resolvedOffset <= 14L * 3600L &&
+          !resolvedName.isEmpty()) {
+        utcOffsetSeconds = resolvedOffset;
+        timeZoneName = resolvedName;
+        lookupSucceeded = true;
+        preferences.putString("tz_location", locationKey);
+        preferences.putLong("tz_offset", utcOffsetSeconds);
+        preferences.putString("tz_name", timeZoneName);
+      }
+    } else if (error) {
+      Serial.printf("[timezone] JSON error: %s\n", error.c_str());
+    } else {
+      Serial.println("[timezone] Response is missing timezone fields");
+    }
+  } else {
+    Serial.printf("[timezone] Request error: %s\n",
+                  timeZoneHttp.errorToString(timeZoneHttpCode).c_str());
+  }
+  timeZoneHttp.end();
+
+  if (!lookupSucceeded && preferences.getString("tz_location", "") == locationKey) {
+    utcOffsetSeconds = preferences.getLong("tz_offset", 0);
+    timeZoneName = preferences.getString("tz_name", "UTC");
+    usedCachedValue = true;
+    Serial.printf("[timezone] Using cached %s, UTC offset %ld seconds\n",
+                  timeZoneName.c_str(), utcOffsetSeconds);
+  } else if (!lookupSucceeded) {
+    Serial.println("[timezone] No location-specific cache; using UTC");
+  }
+
+  configTime(utcOffsetSeconds, 0, ntpServer);
+  lastTimeZoneRefreshTime = millis();
+  return timeZoneName + (usedCachedValue ? " (cached)" : "");
+}
+
 void loadSettingsAndConnect() {
   wifi_password = preferences.getString("password", "");
   latitude = preferences.getString("lat", "0.0");
@@ -586,9 +659,11 @@ void loadSettingsAndConnect() {
                              String(totalConnectionAttempts) +
                                  " attempts failed - hold BtnB 5 seconds to reset");
   } else {
-    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
     drawCenteredStatusScreen(TFT_DARKGREEN, TFT_GREEN, "Connected", wifi_ssid,
-                             "Waiting for aircraft data...");
+                             "Finding local time zone...");
+    const String timeZoneName = configureLocalTimeFromCoordinates();
+    drawCenteredStatusScreen(TFT_DARKGREEN, TFT_GREEN, "Connected", wifi_ssid,
+                             "Time zone: " + timeZoneName);
     delay(2000);
   }
 }

@@ -18,6 +18,7 @@ The tracker fetches data from **adsb.lol**, a free, open-source community-driven
 *   **Multi-Page Interface**: The Core2 overview is followed by 6 pages of detailed telemetry, including altitude, speed, heading, squawk code, and more.
 *   **Emergency Alerts**: The display highlights aircraft with emergency squawk codes (7500, 7600, 7700).
 *   **Audible Alerts**: Plays a soft two-note chime when a new aircraft is detected.
+*   **Automatic Local Time**: Resolves the local time zone from the configured latitude and longitude.
 *   **Easy Web-Based Configuration**: An initial setup mode allows you to easily connect the device to your Wi-Fi and set your location.
 *   **Factory Reset**: An easy hardware-button-based reset to clear settings.
 
@@ -118,6 +119,7 @@ Airline logo licensing and attribution are documented in [THIRD_PARTY_NOTICES.md
 *   Retained the original six telemetry pages as secondary Core2 pages and preserved the Plus2 presentation.
 *   Added responsive Core2 layouts for setup, Wi-Fi connection, status, error, and telemetry screens.
 *   Added three automatic retries to the initial Wi-Fi connection process.
+*   Added automatic coordinate-based time-zone detection with a cached offline fallback.
 
 **v1.1 - Sep 10,2025**
 

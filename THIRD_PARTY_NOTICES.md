@@ -31,3 +31,8 @@ SOFTWARE.
 
 Airline names and logos remain trademarks of their respective owners and are
 used for identification.
+
+## Open-Meteo
+
+Coordinate-based time-zone information is provided by the Open-Meteo Forecast
+API: https://open-meteo.com/
