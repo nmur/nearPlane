@@ -1,11 +1,11 @@
-# nearPlane ADSB Tracker for M5StickC Plus 2
+# nearPlane ADSB Tracker for M5Stack Core2 and M5StickC Plus 2
 
 ![nearPlane](https://i.imgur.com/YsXTTUf.jpeg)
 
 
 So, I was inspired by [this](https://www.reddit.com/r/ADSB/comments/1nbsb3c/inspired_by_ufil1983s_nearest_aircraft_display_i/) reddit post, and he was inspired by [this one](https://www.reddit.com/r/ADSB/comments/1nb56ld/nearest_aircraft_display/). But hey, in the end, I created this nearPlane.
 
-It transforms your `M5StickC Plus 2 thing` which dying in your stuff drawer (I know you have one, everybody does, no worries) into a portable, real-time aircraft tracker. No need to check Flightradar or something else. IDK if you're that much of an avgeek, but it's perfect for aviation enthusiasts, curious minds, and anyone who's ever looked up at the sky and wondered, "What plane is that?"
+It transforms an M5Stack Core2 or M5StickC Plus 2 into a portable, real-time aircraft tracker. No need to check Flightradar or something else. IDK if you're that much of an avgeek, but it's perfect for aviation enthusiasts, curious minds, and anyone who's ever looked up at the sky and wondered, "What plane is that?"
 
 The tracker fetches data from **adsb.lol**, a free, open-source community-driven project that collects and provides real-time `ADS-B` (Automatic Dependent Surveillance-Broadcast) data from aircraft around the world. This allows you to see detailed flight information without needing your own expensive radio hardware.
 
@@ -21,38 +21,50 @@ The tracker fetches data from **adsb.lol**, a free, open-source community-driven
 
 ## Install
 
-It's listing on m5burner now! 🎉 Search as "nearPlane" and burn directly your device or 👇🏻
+The original M5StickC Plus 2 firmware is listed on M5Burner. For M5Stack Core2, build and upload the Core2 environment with PlatformIO as described below.
 
 ## Do you want one?
 
 ### Prerequisites
 
-*   Buy a M5StickC Plus 2 (ask your wife before order one)
+*   An M5Stack Core2 or M5StickC Plus 2
 *   Install [Visual Studio Code](https://code.visualstudio.com/) with the [PlatformIO IDE extension](https://platformio.org/install/ide?install=vscode), or install [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html)
 *   A USB-C cable for programming and charging
 
 ### Installation Guide
 
-Follow these steps to compile and upload the tracker firmware to your M5StickC Plus 2.
+Follow these steps to compile and upload the tracker firmware. M5Stack Core2 is the default PlatformIO target.
 
 #### 1. Install USB Driver
 
-The M5StickC Plus 2 uses a CH9102 chip for USB communication. You will need to install the driver for your operating system to ensure your computer can communicate with the device.
+Core2 units use either a CP2104 or CH9102F USB communication chip, while the M5StickC Plus 2 uses CH9102. Install the appropriate driver if your operating system does not detect the device automatically.
 
-*   **Windows**: [Download and install the CH9102 driver](https://docs.m5stack.com/en/core/M5StickC%20PLUS2).
-*   **MacOS**: MacOS should detect the device automatically. If not, the driver can be found on the same M5Stack documentation page.
+*   **M5Stack Core2 drivers**: [Core2 documentation](https://docs.m5stack.com/en/core/Core2)
+*   **M5StickC Plus 2 drivers**: [M5StickC Plus 2 documentation](https://docs.m5stack.com/en/core/M5StickC%20PLUS2)
 
 #### 2. Build and Upload with PlatformIO
 
 PlatformIO installs the ESP32 toolchain and the pinned `M5Unified` and `ArduinoJson` dependencies automatically.
 
 1.  Clone this repository and open its root directory in Visual Studio Code.
-2.  Connect the M5StickC Plus 2 with a USB-C cable.
+2.  Connect the target device with a USB-C cable.
 3.  Use the PlatformIO **Upload** task, or run these commands from the repository root:
     ```sh
     pio run
     pio run --target upload
     ```
+
+The default commands build and upload the M5Stack Core2 environment. The targets can also be selected explicitly:
+
+```sh
+# M5Stack Core2
+pio run -e m5stack-core2
+pio run -e m5stack-core2 --target upload
+
+# M5StickC Plus 2
+pio run -e m5stick-c-plus2
+pio run -e m5stick-c-plus2 --target upload
+```
 
 PlatformIO normally detects the serial port automatically. If more than one compatible device is attached, pass it explicitly:
 
@@ -66,7 +78,7 @@ To view firmware logs, use the PlatformIO **Monitor** task or run:
 pio device monitor
 ```
 
-The PlatformIO environment uses the `m5stick-c` board definition with the M5StickC Plus2 PSRAM flags recommended by M5Stack, because PlatformIO does not currently provide a separate Plus2 board ID. It overrides the legacy board definition with the Plus2's 8 MB flash layout.
+The Core2 environment uses PlatformIO's `m5stack-core2` board definition and 16 MB flash layout. The Plus2 environment uses the `m5stick-c` board definition with the Plus2 PSRAM flags and overrides the legacy board definition with the Plus2's 8 MB flash layout.
 
 ### Device Configuration
 
@@ -82,14 +94,21 @@ After successfully burning the firmware, the device will boot into "SETUP MODE" 
     *   **Scan Radius (km)**: The radius around your location to scan for aircraft (e.g., `50`).
 4.  Click **"Save & Reboot"**.
 
-The M5StickC Plus 2 will save your settings and restart. It will then automatically connect to your specified Wi-Fi network and begin tracking aircraft.
+The device will save your settings and restart. It will then automatically connect to your specified Wi-Fi network and begin tracking aircraft.
 
 ### Usage
 
-*   **Change Page**: Short press the large button on the front (BtnA) to cycle through the different information pages.
-*   **Reset Settings**: To clear all saved settings and re-enter "SETUP MODE", press and hold the right-side button (BtnB) for 5 seconds. A confirmation screen will appear during the hold.
+*   **M5Stack Core2**: Tap the left virtual button (BtnA) to change pages. Press and hold the middle virtual button (BtnB) for 5 seconds to reset settings.
+*   **M5StickC Plus 2**: Short press the large front button (BtnA) to change pages. Press and hold the right-side button (BtnB) for 5 seconds to reset settings.
+
+The first Core2 port intentionally retains the original 240 x 135 drawing coordinates. The interface therefore occupies the upper-left area of the Core2's larger display until the Core2-native layout is introduced.
 
 ## Changelog
+
+**Unreleased**
+
+*   Added an M5Stack Core2 build target using the existing M5Unified hardware abstraction.
+*   Preserved the original interface dimensions and behavior for the initial port.
 
 **v1.1 - Sep 10,2025**
 
